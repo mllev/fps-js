@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Canvas Experiments</title>
+</head>
+<body>
+  <canvas width='640' height='480' id='screen'></canvas>
+</body>
+<script>
+  let el = document.getElementById('screen')
+  let width = el.width
+  let height = el.height
+  let ctx = el.getContext('2d')
+  let imgData = ctx.createImageData(width, height)
+  let target = imgData.data
+  let halfWidth = width / 2
+  let halfHeight = height / 2
+
+  let keysPressed = {
+    a: false,
+    w: false,
+    s: false,
+    d: false,
+    ArrowLeft: false,
+    ArrowRight: false
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (keysPressed[e.key] !== undefined) {
+      keysPressed[e.key] = true
+    }
+  })
+
+  window.addEventListener('keyup', function (e) {
+    if (keysPressed[e.key] !== undefined) {
+      keysPressed[e.key] = false
+    }
+  })
+
+  let textures = []
+
+  let player = {
+    pos     : { x: 10, y: 5, z: 9, },
+    forward : { x: 0, z: 1 },
+    right   : { x: 1, z: 0 },
+    yaw     : 0,
+    speed   : 0.5
+  }
+
+  let sectorData = {
+    height: 10,
+    walls: [{
+      points: [
+        { x:  5.0, z:  5.0 },
+        { x:  5.0, z: 20.0 }
+      ],
+      transformed: [],
+      visible: true,
+      texture: {
+        index: 0,
+        top_left_uv: { u: 0, v: 0 },
+        bottom_right_uv: { u: 3, v: 1 },
+        top_left_uv_clipped: {},
+        bottom_right_uv_clipped: {}
+      }
+    }, {
+      points: [
+        { x:  5.0, z: 20.0 },
+        { x: 20.0, z: 20.0 }
+      ],
+      transformed: [],
+      visible: true,
+      texture: {
+        index: 0,
+        top_left_uv: { u: 0, v: 0 },
+        bottom_right_uv: { u: 1, v: 1 },
+        top_left_uv_clipped: {},
+        bottom_right_uv_clipped: {}
+      }
+    }, {
+      points: [
+        { x: 20.0, z: 20.0 },
+        { x: 20.0, z:  5.0 }
+      ],
+      transformed: [],
+      visible: true,
+      texture: {
+        index: 0,
+        top_left_uv: { u: 0, v: 0 },
+        bottom_right_uv: { u: 1, v: 1 },
+        top_left_uv_clipped: {},
+        bottom_right_uv_clipped: {}
+      }
+    }, {
+      points: [
+        { x: 20.0, z:  5.0 },
+        { x:  5.0, z:  5.0 }
+      ],
+      transformed: [],
+      visible: true,
+      texture: {
+        index: 0,
+        top_left_uv: { u: 0, v: 0 },
+        bottom_right_uv: { u: 1, v: 1 },
+        top_left_uv_clipped: {},
+        bottom_right_uv_clipped: {}
+      }
+    }]
+  }
+
+  let log = function () {
+    let has_logged = false
+    return function () {
+      if (!has_logged) {
+        console.log.apply(console, arguments)
+        has_logged = true
+        setTimeout(function () { has_logged = false }, 500)
+      }
+    }
+  }()
+
+  function load_textures(urls, fn) {
+    let pending = urls.length
+    let result = []
+
+    if (pending === 0) {
+      fn([])
+      return
+    }
+
+    urls.forEach(function (url, i) {
+      let image = new Image()
+      image.onload = function () {
+        let canvas = document.createElement('canvas')
+        let context = canvas.getContext('2d')
+        canvas.width = image.width
+        canvas.height = image.height
+        context.drawImage(image, 0, 0, image.width, image.height)
+        result[i] = {
+          width: image.width,
+          height: image.height,
+          data: context.getImageData(0, 0, image.width, image.height).data
+        }
+        if (--pending === 0)
+          fn(result)
+      }
+      image.src = url
+    })
+  }
+
+  function put_pixel (x, y, r, g, b) {
+    let idx = (width * 4 * y) + (x * 4)
+    target[idx + 0] = r
+    target[idx + 1] = g
+    target[idx + 2] = b
+    target[idx + 3] = 255
+  }
+
+  function fill_screen (r, g, b) {
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        put_pixel(x, y, r, g, b)
+      }
+    }
+  }
+
+  function draw_line (x1, y1, x2, y2, r, g, b, u) {
+    let dx = Math.abs(x2 - x1)
+    let dy = Math.abs(y2 - y1)
+    let dv = 64
+    let step
+
+    if (dx >= dy) step = dx
+    else step = dy
+
+    dv = dv / dy
+    dx = dx / step
+    dy = dy / step
+
+    let x = x1
+    let y = y1
+    let v = 0
+    let i = 1
+
+    while (i <= step) {
+      if (x >= 0 && x < width && y >= 0 && y < height) {
+        let textureIdx = (Math.floor(v) * (64 * 4)) + (u * 4)
+        r = textures[0].data[textureIdx + 0]
+        g = textures[0].data[textureIdx + 1]
+        b = textures[0].data[textureIdx + 2]
+        put_pixel(Math.floor(x), Math.floor(y), r, g, b)
+      }
+
+      x += dx
+      y += dy
+      v += dv
+      i++
+    }
+  }
+
+  function draw_grid () {
+    for (let x = 0; x < width; x += 20) {
+      draw_line(x, 0, x, height - 1, 50, 50, 50)
+    }
+
+    for (let y = 0; y < width; y += 20) {
+      draw_line(0, y, width - 1, y, 50, 50, 50)
+    }
+  }
+
+  function rotate_y (vec, c, s) {
+    return {
+      z: c * vec.z - s * vec.x,
+      x: c * vec.x + s * vec.z
+    }
+  }
+
+  function translate (p1, p2) {
+    return {
+      x: p1.x - p2.x,
+      z: p1.z - p2.z
+    }
+  }
+
+  function transform_wall (wall) {
+    let c = Math.cos(-player.yaw)
+    let s = Math.sin(-player.yaw)
+
+    wall.transformed[0] = translate(wall.points[0], player.pos)
+    wall.transformed[1] = translate(wall.points[1], player.pos)
+
+    wall.transformed[0] = rotate_y(wall.transformed[0], c, s)
+    wall.transformed[1] = rotate_y(wall.transformed[1], c, s)
+  }
+
+  function clip_wall (wall) {
+    let x1 = wall.transformed[0].x
+    let z1 = wall.transformed[0].z
+    let x2 = wall.transformed[1].x
+    let z2 = wall.transformed[1].z
+    let u1 = wall.texture.top_left_uv.u
+    let u2 = wall.texture.bottom_right_uv.u
+    let nearClip = 1.0
+
+    wall.texture.top_left_uv_clipped.u = u1
+    wall.texture.bottom_right_uv_clipped.u = u2
+
+    if (z1 < nearClip) {
+      if (z2 < nearClip) {
+        wall.visible = false
+        return
+      }
+
+      let xstep = (x2 - x1) / (z2 - z1)
+      let ustep = (u2 - u1) / (z2 - z1)
+      let amt = (z1 <= 0 ? (Math.abs(z1) + nearClip) : (nearClip - z1))
+
+      wall.transformed[0].x += (xstep * amt)
+      wall.texture.top_left_uv_clipped.u += (ustep * amt)
+      wall.transformed[0].z = nearClip
+    } else if (z2 < 1) {
+      let xstep = (x1 - x2) / (z1 - z2)
+      let ustep = (u1 - u2) / (z1 - z2)
+      let amt = (z2 <= 0 ? (Math.abs(z2) + nearClip) : (nearClip - z2))
+
+      wall.transformed[1].x += (xstep * amt)
+      wall.texture.bottom_right_uv_clipped.u += (ustep * amt)
+      wall.transformed[1].z = nearClip
+    }
+
+    wall.visible = true
+  }
+
+  function project_wall (wall, height) {
+    let x1 = wall.transformed[0].x
+    let z1 = wall.transformed[0].z
+    let x2 = wall.transformed[1].x
+    let z2 = wall.transformed[1].z
+
+    wall.transformed[0].x = (x1 / z1) * halfWidth + halfWidth
+    wall.transformed[0].y1 = ((0 - player.pos.y) / z1) * halfHeight + halfHeight
+    wall.transformed[0].y2 = ((height - player.pos.y) / z1) * halfHeight + halfHeight
+
+    wall.transformed[1].x = (x2 / z2) * halfWidth + halfWidth
+    wall.transformed[1].y1 = ((0 - player.pos.y) / z2) * halfHeight + halfHeight
+    wall.transformed[1].y2 = ((height - player.pos.y) / z2) * halfHeight + halfHeight
+  }
+
+  function draw_wall (wall) {
+    let lcol = wall.transformed[0]
+    let rcol = wall.transformed[1]
+    let xdiff = rcol.x - lcol.x
+    let xdinv = 1.0 / xdiff
+    let ytopstep = (rcol.y2 - lcol.y2) * xdinv
+    let ybottomstep = (rcol.y1 - lcol.y1) * xdinv
+    let ytop = lcol.y2
+    let ybottom = lcol.y1
+    let x = lcol.x
+    let texture = textures[wall.texture.index]
+    let z1inv = 1.0 / lcol.z
+    let z2inv = 1.0 / rcol.z
+    let u1 = wall.texture.top_left_uv_clipped.u * texture.width * z1inv
+    let u2 = wall.texture.bottom_right_uv_clipped.u * texture.height * z2inv
+    let ustep = (u2 - u1) * xdinv
+    let zstep = (z2inv - z1inv) * xdinv
+
+    if (x < 0) {
+      let amt = Math.abs(x)
+      z1inv += (zstep * amt)
+      u1 += (ustep * amt)
+      ytop += (ytopstep * amt)
+      ybottom += (ybottomstep * amt)
+      x = 0
+    }
+
+    for (; x < rcol.x; x++) {
+      let u = u1 / z1inv
+      if (x >= width) break
+      draw_line(x, ybottom, x, ytop, 255, 255, 255, Math.floor(u) % texture.width)
+      ytop += ytopstep
+      ybottom += ybottomstep
+      z1inv += zstep
+      u1 += ustep
+    }
+  }
+
+  function draw_sector (data) {
+    for (let i = 0, l = data.walls.length; i < l; i++) {
+      let wall = data.walls[i]
+
+      transform_wall(wall)
+      clip_wall(wall)
+
+      if (wall.visible) {
+        project_wall(wall, data.height)
+        draw_wall(wall)
+      }
+    }
+  }
+
+  function update_player () {
+    if (keysPressed.w) {
+      player.pos.x += (player.forward.x * player.speed)
+      player.pos.z += (player.forward.z * player.speed)
+    }
+
+    if (keysPressed.s) {
+      player.pos.x -= (player.forward.x * player.speed)
+      player.pos.z -= (player.forward.z * player.speed)
+    }
+
+    if (keysPressed.a) {
+      player.pos.x -= (player.right.x * player.speed)
+      player.pos.z -= (player.right.z * player.speed)
+    }
+
+    if (keysPressed.d) {
+      player.pos.x += (player.right.x * player.speed)
+      player.pos.z += (player.right.z * player.speed)
+    }
+
+    if (keysPressed.ArrowLeft) {
+      let c = Math.cos(-0.05)
+      let s = Math.sin(-0.05)
+
+      player.yaw -= 0.05
+      player.forward = rotate_y(player.forward, c, s)
+      player.right = rotate_y(player.right, c, s)
+    }
+
+    if (keysPressed.ArrowRight) {
+      let c = Math.cos(0.05)
+      let s = Math.sin(0.05)
+
+      player.yaw += 0.05
+      player.forward = rotate_y(player.forward, c, s)
+      player.right = rotate_y(player.right, c, s)
+    }
+  }
+
+  function game_loop () {
+    fill_screen(0, 0, 0)
+    draw_grid()
+    update_player()
+    draw_sector(sectorData)
+    ctx.putImageData(imgData, 0, 0)
+    window.requestAnimationFrame(game_loop)
+  }
+
+  load_textures(['redbrick.png'], function (textureData) {
+    textures = textureData
+    console.log(textures)
+    game_loop()
+  })
+</script>
+</html>
